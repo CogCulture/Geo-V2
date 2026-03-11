@@ -1,0 +1,21 @@
+node_modules
+dist
+.DS_Store
+server/public
+vite.config.ts.*
+*.tar.gz
+.env
+GEO-backend/.env
+GEO-frontend/.env
+
+# node modules
+node_modules/
+
+# builds
+dist/
+build/
+# Extraneous files
+build_log.txt
+.replit
+replit.md
+tsconfig.tsbuildinfo

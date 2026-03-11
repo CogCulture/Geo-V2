@@ -1,0 +1,36 @@
+services:
+  backend:
+    build: ./GEO-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./GEO-backend/.env
+    environment:
+      - SELENIUM_URL=http://selenium-chrome:4444/wd/hub
+      - FRONTEND_URL=http://34.56.255.33:3000
+    volumes:
+      - ./GEO-backend/analysis_database.db:/app/analysis_database.db
+      - ./GEO-backend/brand_visibility.db:/app/brand_visibility.db
+    depends_on:
+      - selenium-chrome
+    restart: unless-stopped
+
+  frontend:
+    build: ./GEO-frontend
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./GEO-frontend/.env.local
+    environment:
+      - NEXT_PUBLIC_API_URL=http://34.56.255.33:8000
+      - FASTAPI_BASE_URL=http://backend:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  selenium-chrome:
+    image: selenium/standalone-chrome:latest
+    shm_size: 2gb
+    ports:
+      - "4444:4444"
+    restart: unless-stopped

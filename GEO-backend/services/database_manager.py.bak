@@ -1,0 +1,1831 @@
+import os
+import json
+import traceback
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional
+import logging
+from urllib.parse import urlparse
+from collections import Counter
+from supabase import create_client, Client
+from dotenv import load_dotenv
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+# Initialize Supabase client
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# --- STATUS MANAGEMENT (The Fix for Global Variable Issue) ---
+
+def update_session_status(session_id: str, status: str = None, progress: int = None, step: str = None, error: str = None):
+    """
+    Updates the progress/status of a session in the DB.
+    Replaces the global dictionary in app.py.
+    """
+    try:
+        update_data = {}
+        if status: update_data['status'] = status
+        if progress is not None: update_data['progress'] = progress
+        if step: update_data['current_step'] = step
+        if error: update_data['error_message'] = error
+        
+        if update_data:
+            # Check if session exists first to avoid errors
+            supabase.table('analysis_sessions').update(update_data).eq('session_id', session_id).execute()
+    except Exception as e:
+        logger.error(f"Failed to update session status: {e}")
+
+def get_session_status(session_id: str) -> Dict[str, Any]:
+    """Retrieves status from DB."""
+    try:
+        response = supabase.table('analysis_sessions').select('status, progress, current_step, error_message').eq('session_id', session_id).execute()
+        if response.data:
+            return response.data[0]
+        return {"status": "not_found", "progress": 0}
+    except Exception as e:
+        logger.error(f"Failed to get session status: {e}")
+        return {"status": "error", "progress": 0}
+
+def get_session_metadata(session_id: str) -> Optional[Dict[str, Any]]:
+    """Helper to get just the session metadata for copying/forking."""
+    try:
+        response = supabase.table('analysis_sessions').select('*').eq('session_id', session_id).execute()
+        return response.data[0] if response.data else None
+    except Exception as e:
+        logger.error(f"Error fetching session metadata: {e}")
+        return None
+
+def init_database():
+    """
+    Initialize Supabase database with schema
+    Note: Tables should be created via Supabase SQL Editor using the schema below
+    """
+    logger.info("Using Supabase database")
+    logger.info("Ensure tables are created in Supabase SQL Editor with the following schema:")
+    
+    schema_sql = """ 
+    CREATE TABLE IF NOT EXISTS projects (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        website_url TEXT,
+        industry TEXT,
+        update_frequency TEXT DEFAULT '24h',
+        is_active BOOLEAN DEFAULT TRUE,
+        last_sync_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Monitored Prompts for a project
+    CREATE TABLE IF NOT EXISTS monitored_prompts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        prompt_text TEXT NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Monitored Competitors for a project
+    CREATE TABLE IF NOT EXISTS monitored_competitors (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Daily Metrics for historical tracking (Real-time Dashboard Source)
+    CREATE TABLE IF NOT EXISTS daily_brand_metrics (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        llm_name TEXT NOT NULL,
+        visibility_score REAL,
+        avg_position REAL,
+        mention_count INTEGER,
+        total_prompts INTEGER,
+        citation_count INTEGER,
+        date DATE NOT NULL DEFAULT CURRENT_DATE,
+        UNIQUE(project_id, llm_name, date)
+    );
+
+    -- Main analysis sessions table (Updated to link to project)
+    CREATE TABLE IF NOT EXISTS analysis_sessions (
+        session_id TEXT PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        project_id UUID REFERENCES projects(id) ON DELETE SET NULL, -- Link to project
+        brand_name TEXT NOT NULL,
+        product_name TEXT,
+        industry TEXT,
+        website_url TEXT,
+        timestamp TEXT NOT NULL,
+        research_data JSONB,
+        keywords JSONB,
+        status TEXT DEFAULT 'pending',
+        current_step TEXT,
+        progress INTEGER DEFAULT 0,
+        error_message TEXT
+    );
+    
+    -- LLM responses table (Updated to link to project)
+    CREATE TABLE IF NOT EXISTS llm_responses (
+        id SERIAL PRIMARY KEY,
+        prompt_id TEXT NOT NULL,
+        session_id TEXT NOT NULL REFERENCES analysis_sessions(session_id),
+        project_id UUID REFERENCES projects(id) ON DELETE SET NULL, -- Link to project
+        llm_name TEXT NOT NULL,
+        prompt_text TEXT NOT NULL,
+        response_text TEXT NOT NULL,
+        citations JSONB,
+        timestamp TEXT NOT NULL
+    );
+    
+    -- Scoring results table (Updated to link to project)
+    CREATE TABLE IF NOT EXISTS scoring_results (
+        id SERIAL PRIMARY KEY,
+        prompt_id TEXT NOT NULL,
+        session_id TEXT NOT NULL REFERENCES analysis_sessions(session_id),
+        project_id UUID REFERENCES projects(id) ON DELETE SET NULL, -- Link to project
+        llm_name TEXT NOT NULL,
+        brand_mention_score REAL,
+        position_score REAL,
+        description_richness_score REAL,
+        keyword_strength_score REAL,
+        total_score REAL,
+        normalized_visibility REAL,
+        average_positioning REAL,
+        weighted_score REAL,
+        brand_position INTEGER,
+        total_items INTEGER,
+        timestamp TEXT NOT NULL
+    );
+    
+    -- Competitors table
+    CREATE TABLE IF NOT EXISTS competitors (
+        id SERIAL PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES analysis_sessions(session_id),
+        competitor_name TEXT NOT NULL,
+        rank INTEGER
+    );
+    
+    -- Share of Voice results table
+    CREATE TABLE IF NOT EXISTS share_of_voice (
+        id SERIAL PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES analysis_sessions(session_id),
+        brand_name TEXT NOT NULL,
+        normalized_visibility REAL,
+        average_positioning REAL,
+        weighted_score REAL,
+        rank INTEGER,
+        timestamp TEXT NOT NULL
+    );
+    
+    -- Saved prompts table
+    CREATE TABLE IF NOT EXISTS saved_prompts (
+        id SERIAL PRIMARY KEY,
+        brand_name TEXT NOT NULL,
+        product_name TEXT,
+        prompts_json JSONB NOT NULL,
+        timestamp TEXT NOT NULL,
+        UNIQUE(brand_name, product_name)
+    );
+    
+    -- Cohorts table
+    CREATE TABLE IF NOT EXISTS cohorts (
+        id SERIAL PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES analysis_sessions(session_id),
+        cohort_name TEXT NOT NULL,
+        cohort_description TEXT,
+        prompt_count INTEGER,
+        cohort_order INTEGER,
+        timestamp TEXT NOT NULL
+    );
+    
+    -- Prompts with cohort mapping table
+    CREATE TABLE IF NOT EXISTS prompts_cohort_mapping (
+        id SERIAL PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES analysis_sessions(session_id),
+        cohort_id INTEGER NOT NULL REFERENCES cohorts(id),
+        prompt_text TEXT NOT NULL,
+        prompt_index INTEGER,
+        selected BOOLEAN DEFAULT FALSE,
+        timestamp TEXT NOT NULL
+    );
+    """
+    
+    logger.info("Copy the above SQL to Supabase SQL Editor to create tables")
+    return True
+
+def create_session_id(brand_name: str, product_name: Optional[str] = None) -> str:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if product_name:
+        return f"{brand_name.replace(' ', '_')}_{product_name.replace(' ', '_')}_{timestamp}"
+    return f"{brand_name.replace(' ', '_')}_{timestamp}"
+
+def create_prompt_id(session_id: str, prompt_index: int) -> str:
+    return f"{session_id}_prompt_{prompt_index}"
+
+def save_session(session_id: str, brand_name: str, user_id: str, product_name: Optional[str] = None, 
+                 website_url: Optional[str] = None, research_data: Optional[Dict] = None,
+                 keywords: Optional[List[str]] = None, industry: Optional[str] = None,
+                 project_id: Optional[str] = None, brand_aliases: Optional[List[str]] = None):
+    
+    try:
+        logger.info(f"💾 Saving session {session_id} for brand {brand_name}. Project ID: {project_id}")
+        timestamp = datetime.now().isoformat()
+        
+        data = {
+            'session_id': session_id,
+            'user_id': user_id,
+            'brand_name': brand_name,
+            'product_name': product_name,
+            'industry': industry,
+            'website_url': website_url,
+            'timestamp': timestamp,
+            'research_data': research_data,
+            'keywords': keywords,
+            'brand_aliases': brand_aliases,
+            # 'project_id': project_id  <-- REMOVED from here
+            # Note: We do NOT set 'status' here to avoid overwriting "running" status with "pending"
+        }
+        
+        # Only update project_id if explicitly provided, to avoid overwriting with None
+        if project_id is not None:
+            data['project_id'] = project_id
+        
+        # ✅ FIX: Use upsert instead of insert to prevent "duplicate key" errors
+        supabase.table('analysis_sessions').upsert(data).execute()
+        logger.info(f"✅ Saved/Updated session: {session_id}")
+    except Exception as e:
+        logger.error(f"Error saving session: {str(e)}")
+        raise
+
+def save_llm_response(prompt_id: str, session_id: str, llm_name: str, 
+                     prompt_text: str, response_text: str, citations: Optional[List[str]] = None):
+    try:
+        timestamp = datetime.now().isoformat()
+        
+        data = {
+            'prompt_id': prompt_id,
+            'session_id': session_id,
+            'llm_name': llm_name,
+            'prompt_text': prompt_text,
+            'response_text': response_text,
+            'citations': citations,
+            'timestamp': timestamp
+        }
+        
+        supabase.table('llm_responses').insert(data).execute()
+    except Exception as e:
+        logger.error(f"Error saving LLM response: {str(e)}")
+        raise
+
+def save_scoring_result(prompt_id: str, session_id: str, llm_name: str, scores: Dict[str, Any]):
+    try:
+        timestamp = datetime.now().isoformat()
+        
+        data = {
+            'prompt_id': prompt_id,
+            'session_id': session_id,
+            'llm_name': llm_name,
+            'brand_mention_score': scores.get('brand_mention_score', 0),
+            'position_score': scores.get('position_score', 0),
+            'description_richness_score': scores.get('description_richness_score', 0),
+            'keyword_strength_score': scores.get('keyword_strength_score', 0),
+            'total_score': scores.get('total_score', 0),
+            'normalized_visibility': scores.get('normalized_visibility', 0),
+            'average_positioning': scores.get('average_positioning', 0),
+            'weighted_score': scores.get('weighted_score', 0),
+            'brand_position': scores.get('brand_position', 0),
+            'total_items': scores.get('total_items', 0),
+            'timestamp': timestamp
+        }
+        
+        supabase.table('scoring_results').insert(data).execute()
+    except Exception as e:
+        logger.error(f"Error saving scoring result: {str(e)}")
+        raise
+
+def save_competitors(session_id: str, competitors: list):
+    try:
+        data = [
+            {
+                'session_id': session_id,
+                'competitor_name': competitor,
+                'rank': rank
+            }
+            for rank, competitor in enumerate(competitors, 1)
+        ]
+        
+        supabase.table('competitors').insert(data).execute()
+        logger.info(f"✓ Saved {len(competitors)} competitors for session {session_id}")
+    except Exception as e:
+        logger.error(f"Error saving competitors: {str(e)}")
+        raise
+
+def save_share_of_voice(session_id: str, brand_name: str, sov_scores: Dict[str, Any], rank: int):
+    try:
+        timestamp = datetime.now().isoformat()
+        
+        data = {
+            'session_id': session_id,
+            'brand_name': brand_name,
+            'normalized_visibility': sov_scores.get('normalized_visibility', 0),
+            'average_positioning': sov_scores.get('average_positioning', 0),
+            'weighted_score': sov_scores.get('weighted_score', 0),
+            'rank': rank,
+            'timestamp': timestamp
+        }
+        
+        supabase.table('share_of_voice').insert(data).execute()
+    except Exception as e:
+        logger.error(f"Error saving share of voice: {str(e)}")
+        raise
+
+def save_brand_score_summary(session_id: str, brand_name: str, summary: Dict[str, Any]):
+    try:
+        timestamp = datetime.now().isoformat()
+        summary_prompt_id = f"{session_id}_summary"
+        
+        total_prompts = summary.get('total_prompts', 0)
+        total_mentions = summary.get('total_mentions', 0)
+        mention_rate = summary.get('mention_rate', 0)
+        
+        mention_based_visibility = mention_rate
+        
+        data = {
+            'prompt_id': summary_prompt_id,
+            'session_id': session_id,
+            'llm_name': 'SUMMARY',
+            'brand_mention_score': total_mentions,
+            'position_score': summary.get('avg_position', 0),
+            'description_richness_score': 0,
+            'keyword_strength_score': 0,
+            'total_score': mention_based_visibility,
+            'normalized_visibility': mention_based_visibility,
+            'average_positioning': summary.get('avg_position', 0),
+            'weighted_score': mention_based_visibility,
+            'brand_position': 0,
+            'total_items': total_prompts,
+            'timestamp': timestamp
+        }
+        
+        supabase.table('scoring_results').insert(data).execute()
+        logger.info(f"✅ Saved brand score summary for session {session_id}: {mention_based_visibility:.2f}% visibility ({total_mentions}/{total_prompts})")
+    except Exception as e:
+        logger.error(f"Error saving brand score summary: {str(e)}")
+        raise
+
+def get_session_results(session_id: str) -> Dict[str, Any]:
+    try:
+        # Get session metadata
+        session_response = supabase.table('analysis_sessions').select('*').eq('session_id', session_id).execute()
+        session = session_response.data[0] if session_response.data else None
+        
+        if not session:
+            logger.warning(f"Session {session_id} not found in database")
+            return None
+        
+        logger.info(f"Found session {session_id}, fetching related data")
+        
+        # Get LLM responses
+        responses_response = supabase.table('llm_responses').select('*').eq('session_id', session_id).execute()
+        responses = responses_response.data
+        
+        # Get scoring results
+        scores_response = supabase.table('scoring_results').select('*').eq('session_id', session_id).execute()
+        scores = scores_response.data
+        
+        # Get competitors
+        competitors_response = supabase.table('competitors').select('*').eq('session_id', session_id).order('rank').execute()
+        competitors = competitors_response.data
+        
+        # Get Share of Voice
+        sov_response = supabase.table('share_of_voice').select('*').eq('session_id', session_id).order('rank').execute()
+        sov = sov_response.data
+        
+        logger.info(f"Session {session_id}: {len(responses or [])} responses, {len(scores or [])} scores, {len(competitors or [])} competitors")
+        
+        return {
+            'session': session,
+            'responses': responses,
+            'scores': scores,
+            'competitors': competitors,
+            'share_of_voice': sov
+        }
+    except Exception as e:
+        logger.error(f"Error getting session results: {str(e)}", exc_info=True)
+        return None
+
+def get_all_sessions() -> List[Dict[str, Any]]:
+    try:
+        response = supabase.table('analysis_sessions').select(
+            'session_id, brand_name, product_name, timestamp'
+        ).order('timestamp', desc=True).execute()
+        
+        return response.data
+    except Exception as e:
+        logger.error(f"Error getting all sessions: {str(e)}")
+        return []
+
+def get_brand_visibility_history(brand_name: str, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+   
+   
+    try:
+        # Build query for sessions for this brand (and optionally user)
+        query = supabase.table('analysis_sessions').select(
+            'session_id, brand_name, timestamp'
+        ).eq('brand_name', brand_name)
+
+        if user_id:
+            query = query.eq('user_id', user_id)
+
+        sessions_response = query.order('timestamp').execute()
+        
+        sessions = sessions_response.data
+        
+        if not sessions:
+            logger.warning(f"No sessions found for brand: {brand_name} (user_id={user_id})")
+            return []
+        
+        # Optimization: Fetch all scores in one query instead of N+1
+        session_ids = [s['session_id'] for s in sessions]
+        
+        if not session_ids:
+             return []
+             
+        # Batch fetch scores for all sessions in this history
+        scores_response = supabase.table('scoring_results').select(
+            'session_id, brand_mention_score, average_positioning'
+        ).in_('session_id', session_ids).neq('llm_name', 'SUMMARY').execute()
+        
+        all_scoring_results = scores_response.data or []
+        
+        # Group scores by session_id for O(1) access
+        scores_by_session = {}
+        for score in all_scoring_results:
+            sid = score['session_id']
+            if sid not in scores_by_session:
+                scores_by_session[sid] = []
+            scores_by_session[sid].append(score)
+        
+        result = []
+        
+        # Process each session in memory using the batched data
+        for session in sessions:
+            session_id = session['session_id']
+            
+            # Get pre-fetched scores from our dictionary
+            scoring_results = scores_by_session.get(session_id, [])
+            
+            total_prompts = len(scoring_results)
+            mentions = sum(1 for s in scoring_results if s.get('brand_mention_score', 0) > 0)
+            
+            visibility = (mentions / total_prompts * 100) if total_prompts > 0 else 0
+            
+            # Calculate Avg Position (only for prompts where brand was found/ranked)
+            positions = [s.get('average_positioning', 0) for s in scoring_results if s.get('average_positioning', 0) > 0]
+            avg_position = sum(positions) / len(positions) if positions else 0
+
+            timestamp = session['timestamp']
+            date = timestamp.split('T')[0] if 'T' in timestamp else timestamp.split(' ')[0]
+            
+            result.append({
+                'date': date,
+                'timestamp': timestamp,
+                'visibility': round(float(visibility), 2),
+                'average_position': round(float(avg_position), 2),
+                'session_id': session_id,
+                'brand_name': brand_name
+            })
+        
+        logger.info(f"✅ Retrieved {len(result)} historical sessions for brand: {brand_name} (user_id={user_id})")
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting brand visibility history for {brand_name}: {str(e)}")
+        return []
+
+def get_llm_aggregate_scores(session_id: str, llm_name: str) -> Dict[str, float]:
+
+    try:
+        response = supabase.table('scoring_results').select(
+            'normalized_visibility, average_positioning, weighted_score'
+        ).eq('session_id', session_id).eq('llm_name', llm_name).execute()
+        
+        results = response.data
+        
+        if not results:
+            return {
+                'avg_visibility': 0,
+                'avg_positioning': 0,
+                'avg_weighted_score': 0,
+                'total_prompts': 0
+            }
+        
+        total_prompts = len(results)
+        avg_visibility = sum(r['normalized_visibility'] for r in results) / total_prompts
+        
+        positioning_scores = [r['average_positioning'] for r in results if r['average_positioning'] > 0]
+        avg_positioning = sum(positioning_scores) / len(positioning_scores) if positioning_scores else 0
+        
+        avg_weighted = sum(r['weighted_score'] for r in results) / total_prompts
+        
+        return {
+            'avg_visibility': round(avg_visibility, 2),
+            'avg_positioning': round(avg_positioning, 2),
+            'avg_weighted_score': round(avg_weighted, 2),
+            'total_prompts': total_prompts
+        }
+    except Exception as e:
+        logger.error(f"Error getting LLM aggregate scores: {str(e)}")
+        return {'avg_visibility': 0, 'avg_positioning': 0, 'avg_weighted_score': 0, 'total_prompts': 0}
+
+def get_saved_prompts(brand_name: str, product_name: Optional[str] = None) -> Optional[List[str]]:
+
+    try:
+        query = supabase.table('saved_prompts').select('prompts_json').eq('brand_name', brand_name)
+        
+        if product_name:
+            query = query.eq('product_name', product_name)
+        else:
+            query = query.is_('product_name', 'null')
+        
+        response = query.execute()
+        
+        if response.data:
+            return response.data[0]['prompts_json']
+        return None
+    except Exception as e:
+        logger.error(f"Error retrieving saved prompts: {str(e)}")
+        return None
+
+def save_prompts_to_db(brand_name: str, prompts: List[str], product_name: Optional[str] = None):
+
+    try:
+        timestamp = datetime.now().isoformat()
+        
+        data = {
+            'brand_name': brand_name,
+            'product_name': product_name,
+            'prompts_json': prompts,
+            'timestamp': timestamp
+        }
+        
+        # Upsert (insert or update if exists)
+        supabase.table('saved_prompts').upsert(data).execute()
+    except Exception as e:
+        logger.error(f"Error saving prompts: {str(e)}")
+        raise
+
+def get_session_results_aggregated(session_id: str):
+
+    try:
+        logger.info(f"Fetching aggregated results for session: {session_id}")
+        
+        # Get session metadata
+        session_response = supabase.table('analysis_sessions').select('*').eq('session_id', session_id).execute()
+        
+        if not session_response.data:
+            logger.warning(f"Session {session_id} not found in database")
+            return None
+        
+        session_dict = session_response.data[0]
+        brand_name = session_dict.get('brand_name', 'Unknown')
+        logger.info(f"Found session {session_id} for brand {brand_name}")
+
+        # Get LLM responses - Optimizing columns to avoid PROTOCOL_ERROR
+        llm_response = supabase.table('llm_responses').select(
+            'id, prompt_id, llm_name, prompt_text, response_text, citations'
+        ).eq('session_id', session_id).order('id').execute()
+        llm_rows = llm_response.data
+        
+        # Get scoring results
+        scoring_response = supabase.table('scoring_results').select('*').eq('session_id', session_id).execute()
+        scoring_results = scoring_response.data
+        
+        # Optimize: Group scores by (prompt_id, llm_name) for O(1) lookup
+        scores_by_key = {
+            (s.get('prompt_id'), s.get('llm_name')): s 
+            for s in (scoring_results or [])
+        }
+        
+        # NEW: Fetch Cohorts for this session
+        # Ensure get_cohorts_for_session is defined in this file or imported
+        cohorts = get_cohorts_for_session(session_id) 
+        
+        llm_responses = []
+        all_citations = []
+
+        for row in (llm_rows or []):
+            response_text = row.get('response_text', '')
+            prompt_text = row.get('prompt_text', '').strip() or 'Source Unknown'
+            llm_name = row.get('llm_name', 'Unknown')
+            prompt_id = row.get('prompt_id')
+
+            citations = row.get('citations', []) or []
+
+            visibility_score = 0
+            matching_score = scores_by_key.get((prompt_id, llm_name))
+            
+            if matching_score:
+                visibility_score = float(matching_score.get('normalized_visibility', 0))
+
+            llm_responses.append({
+                'prompt': prompt_text,
+                'response': response_text,
+                'llm_name': llm_name,
+                'citations': citations,
+                'visibility_score': visibility_score
+            })
+            all_citations.extend(citations)
+
+        # Domain citations
+        domain_citations = []
+        if all_citations:
+            domains = []
+            for citation_url in all_citations:
+                try:
+                    parsed = urlparse(citation_url)
+                    domain = parsed.netloc or parsed.path
+                    if domain:
+                        domains.append(domain.replace('www.', ''))
+                except:
+                    continue
+            
+            if domains:
+                domain_counts = Counter(domains)
+                total_citations = len(domains)
+                domain_citations = [
+                    {'domain': d, 'citations': c, 'percentage': round((c/total_citations*100), 1)}
+                    for d, c in domain_counts.most_common(10)
+                ]
+        
+        # Calculate mention-based visibility metrics
+        non_summary_scores = [s for s in scoring_results if s.get('llm_name') != 'SUMMARY']
+        
+        total_prompts_analyzed = len(non_summary_scores)
+        total_mentions = sum(1 for s in non_summary_scores if s.get('brand_mention_score', 0) > 0)
+        
+        positioned_scores = [s for s in non_summary_scores if s.get('average_positioning', 0) > 0]
+        avg_position = sum(s['average_positioning'] for s in positioned_scores) / len(positioned_scores) if positioned_scores else 0
+        
+        mention_based_visibility = (total_mentions / total_prompts_analyzed * 100) if total_prompts_analyzed > 0 else 0
+        
+        # Share of Voice
+        sov_response = supabase.table('share_of_voice').select('*').eq('session_id', session_id).order('rank').execute()
+        sov_rows = sov_response.data or []
+        
+        brand_scores = []
+        share_of_voice = []
+
+        total_sov_mass = 0
+        temp_sov_data = []
+
+        if sov_rows:
+            for row in sov_rows:
+                mass = float(row.get('normalized_visibility', 0))
+                total_sov_mass += mass
+                temp_sov_data.append(row)
+        else:
+            total_sov_mass = mention_based_visibility
+            temp_sov_data.append({
+                'brand_name': brand_name,
+                'normalized_visibility': mention_based_visibility,
+                'average_positioning': avg_position,
+                'total_mentions': total_mentions
+            })
+
+        for r in temp_sov_data:
+            brand = r.get('brand_name', 'Unknown')
+            sov_visibility = float(r.get('normalized_visibility', 0))
+            
+            if total_sov_mass > 0:
+                pie_slice_percentage = (sov_visibility / total_sov_mass) * 100
+            else:
+                pie_slice_percentage = 0
+
+            if brand == brand_name:
+                display_visibility = mention_based_visibility
+            else:
+                display_visibility = sov_visibility
+            
+            # Get previous average position for delta calculation
+            user_id = session_dict.get('user_id')
+            prev_sov = get_previous_sov_data(brand_name, user_id, session_id)
+            prev_data = next((p for p in prev_sov if p.get('brand_name') == brand), None)
+            prev_avg_pos = float(prev_data.get('average_positioning', 0)) if prev_data else 0
+
+            brand_scores.append({
+                'brand': brand,
+                'mention_count': total_mentions if brand == brand_name else r.get('rank', 0),
+                'average_position': float(r.get('average_positioning', 0)),
+                'prev_average_position': prev_avg_pos,
+                'visibility_score': display_visibility,
+                'mention_rate': display_visibility / 100,
+                'rank': r.get('rank', 0)
+            })
+            
+            share_of_voice.append({
+                'brand': brand,
+                'percentage': round(pie_slice_percentage, 1),
+                'mention_count': r.get('total_mentions', 0)
+            })
+
+        # Competitors
+        competitors_response = supabase.table('competitors').select('competitor_name').eq('session_id', session_id).order('rank').execute()
+        competitors = [row['competitor_name'] for row in (competitors_response.data or [])]
+        
+        return {
+            'session_id': session_id,
+            'brand_name': brand_name,
+            'num_prompts': total_prompts_analyzed,
+            'brand_scores': brand_scores,
+            'share_of_voice': share_of_voice,
+            'llm_responses': llm_responses,
+            'domain_citations': domain_citations,
+            'competitors': competitors,
+            'cohorts': cohorts, # ✅ Added cohorts here
+            'created_at': session_dict.get('timestamp', ''),
+            'average_visibility_score': mention_based_visibility,
+            'average_position': avg_position,
+            'average_mentions': total_mentions,
+            'session_metadata': {
+                'user_id': session_dict.get('user_id'),
+                'product_name': session_dict.get('product_name'),
+                'website_url': session_dict.get('website_url'),
+                'keywords': session_dict.get('keywords')
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting aggregated results: {e}", exc_info=True)
+        return None
+
+def get_all_unique_brands():
+    try:
+        response = supabase.table('analysis_sessions').select('brand_name').execute()
+        brands = list(set(row['brand_name'] for row in response.data))
+        return sorted(brands)
+    except Exception as e:
+        logger.error(f"Error getting unique brands: {str(e)}")
+        return []
+
+def get_recent_sessions_by_brand(brand_name: str, limit: int = 20):
+    try:
+        response = supabase.table('analysis_sessions').select(
+            'session_id, brand_name, product_name, website_url, timestamp'
+        ).eq('brand_name', brand_name).order('timestamp', desc=True).limit(limit).execute()
+        
+        return response.data
+    except Exception as e:
+        logger.error(f"Error getting recent sessions by brand: {str(e)}")
+        return []
+
+def get_saved_prompts_for_analysis(session_id: str):
+    try:
+        response = supabase.table('llm_responses').select('prompt_text').eq('session_id', session_id).order('timestamp').execute()
+        
+        # Get unique prompts
+        prompts = list(set(row['prompt_text'] for row in response.data))
+        return prompts
+    except Exception as e:
+        logger.error(f"Error getting saved prompts for analysis: {str(e)}")
+        return []
+
+def get_visibility_history_for_same_prompts(brand_name: str, product_name: str, prompts: list):
+    try:
+        if not prompts or not brand_name:
+            logger.warning("No prompts or brand_name provided for same prompts history")
+            return []
+        
+        # Get all sessions for this brand
+        sessions_response = supabase.table('analysis_sessions').select(
+            'session_id, timestamp'
+        ).eq('brand_name', brand_name).order('timestamp').execute()
+        
+        sessions = sessions_response.data
+        
+        if not sessions:
+            return []
+            
+        session_ids = [s['session_id'] for s in sessions]
+        
+        # Batch fetch LLM responses to find prompt_ids for these specific prompts across all sessions
+        responses_res = supabase.table('llm_responses').select(
+            'session_id, prompt_id, prompt_text'
+        ).in_('session_id', session_ids).in_('prompt_text', prompts).execute()
+        
+        # Group prompt_ids by session_id
+        prompt_ids_by_session = {}
+        for r in (responses_res.data or []):
+            sid = r['session_id']
+            pid = r['prompt_id']
+            if sid not in prompt_ids_by_session:
+                prompt_ids_by_session[sid] = []
+            prompt_ids_by_session[sid].append(pid)
+            
+        # Collect all relevant prompt_ids for batch fetching scores
+        all_relevant_pids = []
+        for pids in prompt_ids_by_session.values():
+            all_relevant_pids.extend(pids)
+            
+        if not all_relevant_pids:
+            return []
+            
+        # Batch fetch scoring results for these sessions and prompts
+        # We filter by session_ids AND the specific prompt_ids we care about
+        scores_res = supabase.table('scoring_results').select(
+            'session_id, prompt_id, brand_mention_score'
+        ).in_('session_id', session_ids).in_('prompt_id', all_relevant_pids).neq('llm_name', 'SUMMARY').execute()
+        
+        # Group scores by session_id
+        scores_by_session = {}
+        for s in (scores_res.data or []):
+            sid = s['session_id']
+            pid = s['prompt_id']
+            # Only include if it matches a prompt_id for THIS session
+            if pid in prompt_ids_by_session.get(sid, []):
+                if sid not in scores_by_session:
+                    scores_by_session[sid] = []
+                scores_by_session[sid].append(s)
+            
+        chart_data = []
+        
+        for session in sessions:
+            session_id = session['session_id']
+            
+            # Get pre-fetched scores for this session's relevant prompts
+            scoring_results = scores_by_session.get(session_id, [])
+            
+            if not scoring_results:
+                continue
+                
+            total_prompts = len(scoring_results)
+            mentions = sum(1 for s in scoring_results if s.get('brand_mention_score', 0) > 0)
+            
+            visibility = (mentions / total_prompts * 100) if total_prompts > 0 else 0
+            
+            timestamp = session['timestamp']
+            if 'T' in timestamp:
+                date_display = timestamp.split('T')[0]
+                time_display = timestamp.split('T')[1][:5]
+            else:
+                date_display = timestamp.split(' ')[0]
+                time_display = timestamp.split(' ')[1][:5] if ' ' in timestamp else '00:00'
+            
+            chart_data.append({
+                'date': f"{date_display} {time_display}",
+                'visibility': round(visibility, 2),
+                'timestamp': timestamp,
+                'session_id': session_id
+            })
+        
+        logger.info(f"✅ Found {len(chart_data)} session points for same prompts history (brand: {brand_name})")
+        return chart_data
+        
+    except Exception as e:
+        logger.error(f"Error in get_visibility_history_for_same_prompts: {str(e)}", exc_info=True)
+        return []
+
+def get_product_specific_visibility_history(brand_name: str, product_name: str, user_id: Optional[str] = None):
+    try:
+        # Build query for sessions for brand+product (optionally scoped to user)
+        query = supabase.table('analysis_sessions').select(
+            'session_id, timestamp'
+        ).eq('brand_name', brand_name).eq('product_name', product_name)
+
+        if user_id:
+            query = query.eq('user_id', user_id)
+
+        sessions_response = query.order('timestamp').execute()
+        
+        sessions = sessions_response.data
+        
+        if not sessions:
+            return []
+            
+        # Optimization: Fetch all scores in one query instead of N+1
+        session_ids = [s['session_id'] for s in sessions]
+        
+        # Batch fetch all normalized visibility scores for these sessions
+        scores_response = supabase.table('scoring_results').select(
+            'session_id, normalized_visibility'
+        ).in_('session_id', session_ids).execute()
+        
+        all_scores = scores_response.data or []
+        
+        # Group by session_id
+        scores_by_session = {}
+        for score in all_scores:
+            sid = score['session_id']
+            if sid not in scores_by_session:
+                scores_by_session[sid] = []
+            scores_by_session[sid].append(score)
+        
+        history = {}
+        
+        # Process each session using the batched data
+        for session in sessions:
+            session_id = session['session_id']
+            
+            # Get pre-fetched scores
+            scoring_results = scores_by_session.get(session_id, [])
+            
+            if scoring_results:
+                avg_visibility = sum(s['normalized_visibility'] for s in scoring_results) / len(scoring_results)
+                
+                timestamp = session['timestamp']
+                date = timestamp.split('T')[0] if 'T' in timestamp else timestamp.split(' ')[0]
+                
+                if date not in history:
+                    history[date] = []
+                history[date].append(avg_visibility)
+        
+        chart_data = [
+            {
+                'date': date,
+                'visibility': round(sum(scores) / len(scores), 2),
+                'timestamp': date
+            }
+            for date, scores in sorted(history.items())
+        ]
+        
+        return chart_data
+        
+    except Exception as e:
+        logger.error(f"Error getting product visibility history: {str(e)}")
+        return []
+
+def get_recent_sessions(limit=10):
+    try:
+        response = supabase.table('analysis_sessions').select(
+            'session_id, brand_name, timestamp, product_name, website_url'
+        ).order('timestamp', desc=True).limit(limit).execute()
+        
+        return response.data
+    except Exception as e:
+        logger.error(f"Error getting recent sessions: {str(e)}")
+        return []
+
+def save_cohorts(session_id: str, cohorts: List[Dict]) -> List[int]:
+    try:
+        session_check = supabase.table('analysis_sessions').select('session_id').eq('session_id', session_id).execute()
+        if not session_check.data:
+            logger.error(f"❌ Session {session_id} does NOT exist in database. Cannot save cohorts!")
+            raise Exception(f"Session {session_id} must be saved to database before creating cohorts")
+        
+        timestamp = datetime.now().isoformat()
+        cohort_ids = []
+        
+        for idx, cohort in enumerate(cohorts):
+            data = {
+                'session_id': session_id,
+                'cohort_name': cohort['name'],
+                'cohort_description': cohort.get('description', ''),
+                'prompt_count': cohort.get('prompt_count', 3),
+                'cohort_order': idx,
+                'timestamp': timestamp
+            }
+            
+            response = supabase.table('cohorts').insert(data).execute()
+            if response.data:
+                cohort_ids.append(response.data[0]['id'])
+        
+        logger.info(f"✅ Saved {len(cohorts)} cohorts for session {session_id}")
+        return cohort_ids
+        
+    except Exception as e:
+        logger.error(f"Error saving cohorts: {str(e)}")
+        logger.error(f"  Session ID: {session_id}")
+        logger.error(f"  Cohort count: {len(cohorts) if cohorts else 0}")
+        raise
+
+
+def save_prompts_with_cohorts(session_id: str, cohort_prompts: List[Dict]):
+    try:
+        timestamp = datetime.now().isoformat()
+        
+        all_data = []
+        prompt_index = 0
+        
+        for cohort_data in cohort_prompts:
+            cohort_id = cohort_data['cohort_id']
+            prompts = cohort_data['prompts']
+            
+            for prompt_text in prompts:
+                all_data.append({
+                    'session_id': session_id,
+                    'cohort_id': cohort_id,
+                    'prompt_text': prompt_text,
+                    'prompt_index': prompt_index,
+                    'selected': False,
+                    'timestamp': timestamp
+                })
+                prompt_index += 1
+        
+        if all_data:
+            supabase.table('prompts_cohort_mapping').insert(all_data).execute()
+        
+        logger.info(f"✅ Saved {prompt_index} prompts with cohort mappings for session {session_id}")
+        
+    except Exception as e:
+        logger.error(f"Error saving prompts with cohorts: {str(e)}")
+        raise
+
+def get_cohorts_for_session(session_id: str) -> List[Dict]:
+    try:
+        # Get cohorts
+        cohorts_response = supabase.table('cohorts').select('*').eq('session_id', session_id).order('cohort_order').execute()
+        
+        logger.info(f"📊 Retrieved {len(cohorts_response.data)} cohorts for session {session_id}")
+        
+        if not cohorts_response.data:
+            logger.warning(f"⚠️ No cohorts found for session {session_id}")
+            return []
+        
+        # Optimize: Fetch ALL prompts for this session in one go to avoid N+1 requests
+        # This prevents "COMPRESSION_ERROR" and connection termination issues
+        all_prompts_response = supabase.table('prompts_cohort_mapping').select(
+            'cohort_id, prompt_text, prompt_index, selected'
+        ).eq('session_id', session_id).order('prompt_index').execute()
+        
+        all_prompts = all_prompts_response.data or []
+        
+        # Group prompts by cohort_id
+        prompts_by_cohort = {}
+        for p in all_prompts:
+            cid = p['cohort_id']
+            if cid not in prompts_by_cohort:
+                prompts_by_cohort[cid] = []
+            prompts_by_cohort[cid].append(p)
+            
+        logger.info(f"✅ Retrieved {len(all_prompts)} total prompts for session")
+        
+        cohorts = []
+        for cohort_row in cohorts_response.data:
+            cohort_id = cohort_row['id']
+            
+            # Get prompts from memory
+            prompts = prompts_by_cohort.get(cohort_id, [])
+             
+            # Ensure prompts are properly formatted for frontend
+            formatted_prompts = []
+            for prompt in prompts:
+                formatted_prompts.append({
+                    'prompt_text': prompt.get('prompt_text', ''),
+                    'category': None  # Add category if needed
+                })
+            
+            cohorts.append({
+                'id': cohort_id,
+                'name': cohort_row['cohort_name'],
+                'description': cohort_row['cohort_description'],
+                'prompt_count': len(formatted_prompts),
+                'prompts': formatted_prompts
+            })
+        
+        logger.info(f"✅ Successfully retrieved {len(cohorts)} cohorts with prompts")
+        return cohorts
+        
+    except Exception as e:
+        logger.error(f"❌ Error retrieving cohorts: {str(e)}")
+        logger.error(f"   Stack trace: {traceback.format_exc()}")
+        return []
+
+def update_prompt_selection(session_id: str, prompt_indices: List[int], selected: bool = True):
+    try:
+        supabase.table('prompts_cohort_mapping').update({
+            'selected': selected
+        }).eq('session_id', session_id).in_('prompt_index', prompt_indices).execute()
+        
+        logger.info(f"✅ Updated selection for {len(prompt_indices)} prompts")
+        
+    except Exception as e:
+        logger.error(f"Error updating prompt selection: {str(e)}")
+        raise
+
+def save_custom_cohort(session_id: str, cohort_name: str, cohort_description: str, cohort_order: int) -> int:
+    try:
+        timestamp = datetime.now().isoformat()
+        
+        data = {
+            'session_id': session_id,
+            'cohort_name': cohort_name,
+            'cohort_description': cohort_description,
+            'prompt_count': 5,
+            'cohort_order': cohort_order,
+            'timestamp': timestamp
+        }
+        
+        response = supabase.table('cohorts').insert(data).execute()
+        
+        if response.data:
+            cohort_id = response.data[0]['id']
+            logger.info(f"✅ Saved custom cohort: {cohort_name} (ID: {cohort_id})")
+            return cohort_id
+        return -1
+        
+    except Exception as e:
+        logger.error(f"Error saving custom cohort: {str(e)}")
+        return -1
+
+def save_custom_prompts(session_id: str, cohort_id: int, prompts: List[str], start_index: int = 0):
+    try:
+        timestamp = datetime.now().isoformat()
+        
+        data = [
+            {
+                'session_id': session_id,
+                'cohort_id': cohort_id,
+                'prompt_text': prompt_text,
+                'prompt_index': start_index + idx,
+                'selected': True,
+                'timestamp': timestamp
+            }
+            for idx, prompt_text in enumerate(prompts)
+        ]
+        
+        supabase.table('prompts_cohort_mapping').insert(data).execute()
+        logger.info(f"✅ Saved {len(prompts)} custom prompts for cohort {cohort_id}")
+        
+    except Exception as e:
+        logger.error(f"Error saving custom prompts: {str(e)}")
+        raise
+
+def get_prompt_count_for_cohort(session_id: str, cohort_id: int) -> int:
+    try:
+        response = supabase.table('prompts_cohort_mapping').select(
+            'id', count='exact'
+        ).eq('session_id', session_id).eq('cohort_id', cohort_id).eq('selected', True).execute()
+        
+        return response.count if response.count else 0
+        
+    except Exception as e:
+        logger.error(f"Error getting prompt count: {str(e)}")
+        return 0
+
+def update_cohort_selection(session_id: str, cohort_id: int, selected: bool):
+    try:
+        if not selected:
+            supabase.table('prompts_cohort_mapping').update({
+                'selected': False
+            }).eq('session_id', session_id).eq('cohort_id', cohort_id).execute()
+        
+        logger.info(f"Updated cohort {cohort_id} selection: {selected}")
+        
+    except Exception as e:
+        logger.error(f"Error updating cohort selection: {str(e)}")
+        raise
+
+def get_selected_cohort_count(session_id: str) -> int:
+    try:
+        response = supabase.table('prompts_cohort_mapping').select(
+            'cohort_id'
+        ).eq('session_id', session_id).eq('selected', True).execute()
+        
+        unique_cohorts = set(row['cohort_id'] for row in response.data)
+        return len(unique_cohorts)
+        
+    except Exception as e:
+        logger.error(f"Error getting selected cohort count: {str(e)}")
+        return 0
+
+def get_selected_prompts(session_id: str) -> List[str]:
+    try:
+        response = supabase.table('prompts_cohort_mapping').select(
+            'prompt_text'
+        ).eq('session_id', session_id).eq('selected', True).order('prompt_index').execute()
+        
+        return [row['prompt_text'] for row in response.data]
+        
+    except Exception as e:
+        logger.error(f"Error retrieving selected prompts: {str(e)}")
+        return []
+
+
+# ============= AUTHENTICATION FUNCTIONS =============
+
+def signup_user(email: str, password_hash: str) -> Optional[str]:
+    try:
+        data = {
+            'email': email,
+            'password_hash': password_hash,
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        response = supabase.table('users').insert(data).execute()
+        user_id = response.data[0]['id'] if response.data else None
+        
+        if user_id:
+            logger.info(f"✅ User registered: {email}")
+        
+        return user_id
+    except Exception as e:
+        logger.error(f"Error registering user: {str(e)}")
+        raise
+
+
+def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    try:
+        response = supabase.table('users').select('*').eq('email', email).execute()
+        return response.data[0] if response.data else None
+    except Exception as e:
+        logger.error(f"Error retrieving user: {str(e)}")
+        return None
+
+
+def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        response = supabase.table('users').select(
+            'id, email, created_at, subscription_plan, subscription_status, subscription_start, subscription_end, billing_cycle'
+        ).eq('id', user_id).execute()
+        return response.data[0] if response.data else None
+    except Exception as e:
+        logger.error(f"Error retrieving user: {str(e)}")
+        return None
+
+
+def activate_user_subscription(user_id: str, plan_name: str, billing_cycle: str, razorpay_payment_id: str) -> bool:
+    """
+    Updates the users table with subscription details.
+    Calculates subscription_end based on billing_cycle (monthly = +30 days, yearly = +365 days).
+    """
+    try:
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+        days = 365 if billing_cycle.lower() == "yearly" else 30
+        subscription_end = (now + timedelta(days=days)).isoformat()
+
+        supabase.table('users').update({
+            'subscription_plan': plan_name,
+            'subscription_status': 'active',
+            'subscription_start': now.isoformat(),
+            'subscription_end': subscription_end,
+            'billing_cycle': billing_cycle,
+            'razorpay_payment_id': razorpay_payment_id,
+            'updated_at': now.isoformat()
+        }).eq('id', user_id).execute()
+
+        logger.info(f"✅ Subscription activated for user {user_id}: {plan_name} ({billing_cycle}) until {subscription_end}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Error activating subscription for user {user_id}: {str(e)}")
+        return False
+
+
+def save_payment_transaction(
+    user_id: str,
+    user_email: str,
+    razorpay_order_id: str,
+    razorpay_payment_id: str,
+    razorpay_signature: str,
+    plan_name: str,
+    billing_cycle: str,
+    subscription_end: str
+) -> bool:
+    """
+    Saves an immutable audit record to the payment_transactions table.
+    This provides idempotency: if razorpay_payment_id already exists (UNIQUE), the insert will fail.
+    """
+    try:
+        supabase.table('payment_transactions').insert({
+            'user_id': user_id,
+            'user_email': user_email,
+            'razorpay_order_id': razorpay_order_id,
+            'razorpay_payment_id': razorpay_payment_id,
+            'razorpay_signature': razorpay_signature,
+            'plan_name': plan_name,
+            'billing_cycle': billing_cycle,
+            'status': 'verified',
+            'subscription_end': subscription_end,
+        }).execute()
+        logger.info(f"✅ Payment transaction saved for user {user_id}, payment {razorpay_payment_id}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Error saving payment transaction: {str(e)}")
+        # If the error is a unique-constraint violation the payment was already processed
+        raise
+
+
+def get_subscription_status(user_id: str) -> Dict[str, Any]:
+    """
+    Returns the subscription status for a user.
+    `is_active` is True only when subscription_status == 'active' AND subscription_end is in the future.
+    """
+    try:
+        from datetime import timezone
+        response = supabase.table('users').select(
+            'subscription_plan, subscription_status, subscription_start, subscription_end, billing_cycle'
+        ).eq('id', user_id).execute()
+
+        if not response.data:
+            return {"is_active": False, "subscription_plan": None, "subscription_end": None}
+
+        user = response.data[0]
+        status = user.get('subscription_status', 'inactive')
+        sub_end_str = user.get('subscription_end')
+
+        is_active = False
+        if status == 'active' and sub_end_str:
+            try:
+                # Handle both offset-aware and naive ISO strings
+                sub_end = datetime.fromisoformat(sub_end_str.replace('Z', '+00:00'))
+                if sub_end.tzinfo is None:
+                    sub_end = sub_end.replace(tzinfo=timezone.utc)
+                is_active = sub_end > datetime.now(timezone.utc)
+            except Exception:
+                is_active = False
+
+        return {
+            "is_active": is_active,
+            "subscription_plan": user.get('subscription_plan'),
+            "subscription_status": status,
+            "subscription_start": user.get('subscription_start'),
+            "subscription_end": sub_end_str,
+            "billing_cycle": user.get('billing_cycle'),
+        }
+    except Exception as e:
+        logger.error(f"Error getting subscription status for user {user_id}: {str(e)}")
+        return {"is_active": False, "subscription_plan": None, "subscription_end": None}
+
+
+def get_user_sessions(user_id: str) -> List[Dict[str, Any]]:
+    try:
+        response = supabase.table('analysis_sessions').select('*').eq('user_id', user_id).order('timestamp', desc=True).execute()
+        return response.data if response.data else []
+    except Exception as e:
+        logger.error(f"Error retrieving user sessions: {str(e)}")
+        return []
+
+def duplicate_session_cohorts(parent_session_id: str, new_session_id: str):
+ 
+    try:
+        # 1. Get all cohorts from the parent session
+        parent_cohorts = supabase.table('cohorts').select('*').eq('session_id', parent_session_id).execute()
+        
+        if not parent_cohorts.data:
+            logger.warning(f"No cohorts found to duplicate for session {parent_session_id}")
+            return
+
+        # 2. Iterate and copy each cohort
+        for old_cohort in parent_cohorts.data:
+            cohort_data = {
+                'session_id': new_session_id,
+                'cohort_name': old_cohort['cohort_name'],
+                'cohort_description': old_cohort.get('cohort_description'),
+                'prompt_count': old_cohort.get('prompt_count'),
+                'cohort_order': old_cohort.get('cohort_order'),
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            # Insert new cohort and get its ID
+            new_cohort_res = supabase.table('cohorts').insert(cohort_data).execute()
+            
+            if new_cohort_res.data:
+                new_cohort_id = new_cohort_res.data[0]['id']
+                old_cohort_id = old_cohort['id']
+                
+                # 3. Get all prompts for this cohort
+                old_prompts = supabase.table('prompts_cohort_mapping')\
+                    .select('*').eq('cohort_id', old_cohort_id).execute()
+                
+                if old_prompts.data:
+                    new_prompts_data = []
+                    for prompt in old_prompts.data:
+                        new_prompts_data.append({
+                            'session_id': new_session_id,
+                            'cohort_id': new_cohort_id,
+                            'prompt_text': prompt['prompt_text'],
+                            'prompt_index': prompt['prompt_index'],
+                            'selected': False,
+                            'timestamp': datetime.now().isoformat()
+                        })
+                    
+                    # Bulk insert prompts
+                    if new_prompts_data:
+                        supabase.table('prompts_cohort_mapping').insert(new_prompts_data).execute()
+        
+        logger.info(f"Successfully duplicated cohorts from {parent_session_id} to {new_session_id}")
+
+    except Exception as e:
+        logger.error(f"Error duplicating cohorts: {str(e)}")
+
+def duplicate_session_competitors(parent_session_id: str, new_session_id: str):
+    """Copies competitors from one session to another to ensure they are carried forward."""
+    try:
+        # Get competitors from parent
+        response = supabase.table('competitors').select('competitor_name, rank').eq('session_id', parent_session_id).order('rank').execute()
+        
+        if response.data:
+            new_data = [
+                {
+                    'session_id': new_session_id,
+                    'competitor_name': row['competitor_name'],
+                    'rank': row['rank']
+                }
+                for row in response.data
+            ]
+            supabase.table('competitors').insert(new_data).execute()
+            logger.info(f"✅ Duplicated {len(new_data)} competitors from {parent_session_id} to {new_session_id}")
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"❌ Error duplicating competitors: {str(e)}")
+        return False
+
+
+# --- PROJECT MANAGEMENT ---
+
+def create_project(user_id: str, name: str, website_url: Optional[str] = None, 
+                   industry: Optional[str] = None, update_frequency: str = '24h') -> Optional[Dict[str, Any]]:
+   
+    try:
+        data = {
+            'user_id': user_id,
+            'name': name,
+            'website_url': website_url,
+            'industry': industry,
+            'update_frequency': update_frequency,
+            'is_active': True,
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat()
+        }
+        response = supabase.table('projects').insert(data).execute()
+        return response.data[0] if response.data else None
+    except Exception as e:
+        logger.error(f"Error creating project: {str(e)}")
+        return None
+
+def get_user_projects(user_id: str) -> List[Dict[str, Any]]:
+    
+    try:
+        response = supabase.table('projects').select('*').eq('user_id', user_id).order('created_at', desc=True).execute()
+        return response.data if response.data else []
+    except Exception as e:
+        logger.error(f"Error retrieving user projects: {str(e)}")
+        return []
+
+def get_project_by_id(project_id: str) -> Optional[Dict[str, Any]]:
+   
+    try:
+        response = supabase.table('projects').select('*').eq('id', project_id).execute()
+        return response.data[0] if response.data else None
+    except Exception as e:
+        logger.error(f"Error retrieving project {project_id}: {str(e)}")
+        return None
+
+def update_project(project_id: str, update_data: Dict[str, Any]) -> bool:
+    
+    try:
+        update_data['updated_at'] = datetime.now().isoformat()
+        supabase.table('projects').update(update_data).eq('id', project_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error updating project {project_id}: {str(e)}")
+        return False
+
+def delete_project(project_id: str) -> bool:
+    
+    try:
+        logger.info(f"🗑️ Attempting to delete project {project_id} and all its data")
+        
+        # 1. Get all session IDs associated with this project
+        sessions_res = supabase.table('analysis_sessions').select('session_id').eq('project_id', project_id).execute()
+        session_ids = [s['session_id'] for s in (sessions_res.data or [])]
+        
+        if session_ids:
+            logger.info(f"  Found {len(session_ids)} sessions to delete")
+            
+            # 2. Delete all related data for these sessions
+            # We must be thorough because foreign keys might not cascade if not set up that way
+            try:
+                supabase.table('llm_responses').delete().in_('session_id', session_ids).execute()
+                supabase.table('scoring_results').delete().in_('session_id', session_ids).execute()
+                supabase.table('competitors').delete().in_('session_id', session_ids).execute()
+                supabase.table('share_of_voice').delete().in_('session_id', session_ids).execute()
+                supabase.table('prompts_cohort_mapping').delete().in_('session_id', session_ids).execute()
+                supabase.table('cohorts').delete().in_('session_id', session_ids).execute()
+                # saved_prompts are not linked to session_id, but prompt mappings are.
+            except Exception as e:
+                logger.warning(f"  Partial failure clearing session children (might be handled by cascade): {e}")
+
+            # 3. Delete the sessions themselves
+            supabase.table('analysis_sessions').delete().in_('session_id', session_ids).execute()
+            logger.info("  Sessions deleted")
+            
+        # 4. Delete the project
+        # This should cascade to monitored_prompts, monitored_competitors, daily_brand_metrics
+        supabase.table('projects').delete().eq('id', project_id).execute()
+        
+        logger.info(f"✅ Project {project_id} deleted successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Error deleting project {project_id}: {str(e)}")
+        return False
+
+# --- MONITORED ENTITIES MANAGEMENT ---
+
+def add_monitored_prompts(project_id: str, prompts: List[str]) -> bool:
+    
+    try:
+        data = [
+            {'project_id': project_id, 'prompt_text': prompt, 'is_active': True}
+            for prompt in prompts
+        ]
+        supabase.table('monitored_prompts').insert(data).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error adding monitored prompts: {str(e)}")
+        return False
+
+def get_monitored_prompts(project_id: str, active_only: bool = True) -> List[Dict[str, Any]]:
+   
+    try:
+        query = supabase.table('monitored_prompts').select('*').eq('project_id', project_id)
+        if active_only:
+            query = query.eq('is_active', True)
+        response = query.order('created_at', desc=True).execute()
+        return response.data if response.data else []
+    except Exception as e:
+        logger.error(f"Error retrieving monitored prompts: {str(e)}")
+        return []
+
+def add_monitored_competitors(project_id: str, competitor_names: List[str]) -> bool:
+    
+    try:
+        data = [
+            {'project_id': project_id, 'name': name}
+            for name in competitor_names
+        ]
+        supabase.table('monitored_competitors').insert(data).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error adding monitored competitors: {str(e)}")
+        return False
+
+def get_monitored_competitors(project_id: str) -> List[Dict[str, Any]]:
+    
+    try:
+        response = supabase.table('monitored_competitors').select('*').eq('project_id', project_id).execute()
+        return response.data if response.data else []
+    except Exception as e:
+        logger.error(f"Error retrieving monitored competitors: {str(e)}")
+        return []
+
+# --- HISTORICAL AGGREGATED METRICS ---
+
+def get_project_dashboard_metrics(project_id: str, days: int = 30) -> List[Dict[str, Any]]:
+    try:
+        start_date = (datetime.now() - timedelta(days=days)).date().isoformat()
+        response = supabase.table('daily_brand_metrics')\
+            .select('*')\
+            .eq('project_id', project_id)\
+            .gte('date', start_date)\
+            .order('date')\
+            .execute()
+        return response.data if response.data else []
+    except Exception as e:
+        logger.error(f"Error fetching dashboard metrics: {str(e)}")
+        return []
+
+def replace_session_competitors(session_id: str, competitors: list):
+    """Deletes existing competitors for a session and adds new ones."""
+    try:
+        supabase.table('competitors').delete().eq('session_id', session_id).execute()
+        if competitors:
+            data = [{'session_id': session_id, 'competitor_name': c, 'rank': i+1} for i, c in enumerate(competitors)]
+            supabase.table('competitors').insert(data).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error replacing competitors: {str(e)}")
+        raise
+
+def clear_session_metrics(session_id: str):
+    """Clears scoring results to prepare for re-calculation."""
+    try:
+        supabase.table('scoring_results').delete().eq('session_id', session_id).execute()
+        supabase.table('share_of_voice').delete().eq('session_id', session_id).execute()
+    except Exception as e:
+        logger.error(f"Error clearing metrics: {str(e)}")
+        raise
+
+# Initialize database on module import
+init_database()
+
+def get_detailed_citation_analytics(session_id: str) -> Dict[str, Any]:
+    try:
+        # Get LLM responses - Optimizing columns to avoid PROTOCOL_ERROR
+        llm_response = supabase.table('llm_responses').select(
+            'llm_name, prompt_text, timestamp, citations'
+        ).eq('session_id', session_id).execute()
+        llm_rows = llm_response.data
+        
+        if not llm_rows:
+            return {'citations': []}
+            
+        domain_stats = {}
+        total_session_citations = 0
+        
+        for row in llm_rows:
+            llm_name = row.get('llm_name', 'Unknown')
+            prompt_text = row.get('prompt_text', '')
+            timestamp = row.get('timestamp', '')
+            citations = row.get('citations', []) or []
+            
+            for url in citations:
+                try:
+                    parsed = urlparse(url)
+                    domain = parsed.netloc or parsed.path
+                    domain = domain.replace('www.', '')
+                    
+                    if not domain:
+                        continue
+                        
+                    if domain not in domain_stats:
+                        domain_stats[domain] = {
+                            'domain': domain,
+                            'total_citations': 0,
+                            'urls': [], # List of distinct URL objects
+                            'llms': set(),
+                            'competitors': [], # Placeholder for now
+                            'first_seen': timestamp
+                        }
+                    
+                    stats = domain_stats[domain]
+                    stats['total_citations'] += 1
+                    total_session_citations += 1
+                    stats['llms'].add(llm_name)
+                    
+                    # Add URL details if unique
+                    existing_url = next((u for u in stats['urls'] if u['url'] == url), None)
+                    if not existing_url:
+                        stats['urls'].append({
+                            'url': url,
+                            'prompt': prompt_text,
+                            'llm': llm_name,
+                            'date': timestamp
+                        })
+                    else:
+                        # If existing but from different prompt/llm, maybe just track it? 
+                        # For now, unique URLs are key.
+                        pass
+                        
+                except Exception as e:
+                    continue
+        
+        # Format for frontend
+        results = []
+        for domain, stats in domain_stats.items():
+            percentage = (stats['total_citations'] / total_session_citations * 100) if total_session_citations > 0 else 0
+            results.append({
+                'domain': domain,
+                'count': stats['total_citations'],
+                'percentage': round(percentage, 1),
+                'urls': stats['urls'],
+                'llms': list(stats['llms']),
+                'competitors': [], 
+                'type': 'Other',
+                'date': stats['first_seen'] # Rough approx
+            })
+            
+        # Sort by count desc
+        results.sort(key=lambda x: x['count'], reverse=True)
+        
+        return {'citations': results, 'total_citations': total_session_citations}
+
+    except Exception as e:
+        logger.error(f"Error getting citation analytics:{e}")
+        return {'citations': [], 'total_citations': 0}
+
+def get_brand_citation_repository(brand_name: str, user_id: str) -> Dict[str, Any]:
+    """
+    Aggregates citations from all analysis sessions for a specific brand and user.
+    Creates a 'repository' view with frequency tracking.
+    """
+    try:
+        # 1. Get all session IDs for this brand and user
+        sessions_response = supabase.table('analysis_sessions').select('session_id').eq('brand_name', brand_name).eq('user_id', user_id).execute()
+        session_ids = [s['session_id'] for s in (sessions_response.data or [])]
+        
+        if not session_ids:
+            return {'citations': [], 'total_citations': 0}
+            
+        # 2. Fetch LLM responses for all these sessions in batch - Optimizing columns
+        llm_response = supabase.table('llm_responses').select(
+            'llm_name, prompt_text, timestamp, citations'
+        ).in_('session_id', session_ids).execute()
+        llm_rows = llm_response.data
+        
+        if not llm_rows:
+            return {'citations': []}
+            
+        domain_stats = {}
+        total_brand_citations = 0
+        
+        for row in llm_rows:
+            llm_name = row.get('llm_name', 'Unknown')
+            prompt_text = row.get('prompt_text', '')
+            timestamp = row.get('timestamp', '')
+            citations = row.get('citations', []) or []
+            
+            for url in citations:
+                try:
+                    parsed = urlparse(url)
+                    domain = parsed.netloc or parsed.path
+                    domain = domain.replace('www.', '')
+                    
+                    if not domain:
+                        continue
+                        
+                    if domain not in domain_stats:
+                        domain_stats[domain] = {
+                            'domain': domain,
+                            'total_citations': 0,
+                            'urls': [], # List of distinct URL objects
+                            'llms': set(),
+                            'competitors': set(),
+                            'first_seen': timestamp
+                        }
+                    
+                    stats = domain_stats[domain]
+                    stats['total_citations'] += 1
+                    total_brand_citations += 1
+                    stats['llms'].add(llm_name)
+                    
+                    # Add URL details if unique
+                    existing_url = next((u for u in stats['urls'] if u['url'] == url), None)
+                    if not existing_url:
+                        stats['urls'].append({
+                            'url': url,
+                            'prompt': prompt_text,
+                            'llm': llm_name,
+                            'date': timestamp
+                        })
+                    else:
+                        # If existing, we could potentially update metadata or count frequency per URL
+                        # For now, we follow the session-specific logic but across all sessions
+                        pass
+                        
+                except Exception as e:
+                    continue
+        
+        # Format for frontend
+        results = []
+        for domain, stats in domain_stats.items():
+            percentage = (stats['total_citations'] / total_brand_citations * 100) if total_brand_citations > 0 else 0
+            results.append({
+                'domain': domain,
+                'count': stats['total_citations'],
+                'percentage': round(percentage, 1),
+                'urls': stats['urls'],
+                'llms': list(stats['llms']),
+                'competitors': list(stats['competitors']), 
+                'type': 'Other', # Could be refined by domain lookups if needed
+                'date': stats['first_seen']
+            })
+            
+        # Sort by count desc
+        results.sort(key=lambda x: x['count'], reverse=True)
+        
+        logger.info(f"✅ Aggregated {total_brand_citations} citations for brand '{brand_name}' spanning {len(session_ids)} sessions")
+        return {'citations': results, 'total_citations': total_brand_citations}
+
+    except Exception as e:
+        logger.error(f"Error getting brand citation repository for {brand_name}: {e}")
+        return {'citations': [], 'total_citations': 0}
+
+def get_previous_sov_data(brand_name: str, user_id: str, current_session_id: str) -> List[Dict[str, Any]]:
+    """
+    Finds the most recent session before current_session_id and returns its SOV data.
+    """
+    try:
+        # 1. Get current session timestamp
+        current_session = supabase.table('analysis_sessions').select('timestamp').eq('session_id', current_session_id).execute()
+        if not current_session.data:
+            return []
+        
+        current_timestamp = current_session.data[0]['timestamp']
+
+        # 2. Find the session immediately preceding this one for the same brand/user
+        prev_session_query = supabase.table('analysis_sessions').select('session_id').eq('brand_name', brand_name).eq('user_id', user_id).lt('timestamp', current_timestamp).order('timestamp', desc=True).limit(1).execute()
+        
+        if not prev_session_query.data:
+            return []
+        
+        prev_session_id = prev_session_query.data[0]['session_id']
+        logger.info(f"Found previous session {prev_session_id} for comparison with {current_session_id}")
+
+        # 3. Get SOV data for that previous session
+        sov_response = supabase.table('share_of_voice').select('*').eq('session_id', prev_session_id).execute()
+        return sov_response.data or []
+
+    except Exception as e:
+        logger.error(f"Error getting previous SOV data: {e}")
+        return []

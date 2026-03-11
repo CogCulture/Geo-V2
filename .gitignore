@@ -1,0 +1,7 @@
+
+# Extraneous files
+build_log.txt
+.replit
+replit.md
+tsconfig.tsbuildinfo
+ngrok.yml

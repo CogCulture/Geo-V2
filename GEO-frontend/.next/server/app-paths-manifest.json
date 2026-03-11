@@ -1,0 +1,7 @@
+{
+  "/pricing/page": "app/pricing/page.js",
+  "/dashboard/page": "app/dashboard/page.js",
+  "/dashboard/results/[sessionId]/page": "app/dashboard/results/[sessionId]/page.js",
+  "/dashboard/[brandId]/page": "app/dashboard/[brandId]/page.js",
+  "/dashboard/llms-txt/page": "app/dashboard/llms-txt/page.js"
+}
