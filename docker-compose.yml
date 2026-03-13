@@ -2,7 +2,7 @@ services:
   backend:
     build: ./GEO-backend
     ports:
-      - "127.0.0.1:8000:8000"    # ← Only accessible locally, not public internet
+      - "8000:8000"    # Allow access from Load Balancer
     env_file:
       - ./GEO-backend/.env
     environment:
@@ -24,7 +24,7 @@ services:
         - NEXT_PUBLIC_GOOGLE_CLIENT_ID=${NEXT_PUBLIC_GOOGLE_CLIENT_ID}
         - NEXT_PUBLIC_RAZORPAY_KEY_ID=${NEXT_PUBLIC_RAZORPAY_KEY_ID}
     ports:
-      - "127.0.0.1:3000:3000"    # ← Only accessible locally, not public internet
+      - "3000:3000"    # Allow access from Load Balancer
     env_file:
       - ./GEO-frontend/.env.local
     environment:

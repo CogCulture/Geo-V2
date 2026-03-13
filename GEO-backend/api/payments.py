@@ -15,7 +15,7 @@ from services.database_manager import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/payments", tags=["Payments"])
+router = APIRouter(prefix="/payments", tags=["Payments"])
 
 class RazorpayOrderRequest(BaseModel):
     plan_name: str

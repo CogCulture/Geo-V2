@@ -53,7 +53,7 @@ class ResearchRequest(BaseModel):
 
 # In app.py - Update the /api/analysis/run endpoint
 
-@router.post("/api/analysis/research")
+@router.post("/analysis/research")
 async def conduct_research_endpoint(request: ResearchRequest, user_id: str = Depends(get_current_user)):
     """Conduct deep research to find competitors and industry info"""
     try:
@@ -78,7 +78,7 @@ async def conduct_research_endpoint(request: ResearchRequest, user_id: str = Dep
         logger.error(f"Error in deep research endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/api/analysis/run")
+@router.post("/analysis/run")
 async def run_analysis(request: AnalysisRequest, background_tasks: BackgroundTasks, user_id: str = Depends(get_current_user)):
     """Start a new analysis (runs in background)"""
     try:
@@ -192,7 +192,7 @@ async def run_analysis(request: AnalysisRequest, background_tasks: BackgroundTas
 
 
 # ✅ NEW ENDPOINT: This solves the metric mix-up issue
-@router.post("/api/analysis/fork-session")
+@router.post("/analysis/fork-session")
 async def fork_session(
     request: CustomExecutionRequest, 
     parent_session_id: str = Query(..., description="The ID of the session to copy context from"),
@@ -257,12 +257,12 @@ async def fork_session(
         logger.error(f"Error forking session: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/api/analysis/status/{session_id}")
+@router.get("/analysis/status/{session_id}")
 def get_status(session_id: str):
     """Get status from DB (Stateless)"""
     return get_session_status(session_id)
 
-@router.post("/api/analysis/execute-custom-prompts/{session_id}")
+@router.post("/analysis/execute-custom-prompts/{session_id}")
 async def execute_custom_prompts_endpoint(
     session_id: str, 
     request: CustomExecutionRequest, 
@@ -308,7 +308,7 @@ async def execute_custom_prompts_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/recent-analyses")
+@router.get("/recent-analyses")
 def recent_analyses(user_id: str = Depends(get_current_user)):
     try:
         # Get recent sessions for the current user
@@ -318,7 +318,7 @@ def recent_analyses(user_id: str = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching recent analyses: {str(e)}")
     
-@router.get("/api/analysis/status/{session_id}")
+@router.get("/analysis/status/{session_id}")
 async def get_session_status_endpoint(session_id: str):
     """Get current analysis progress from database"""
     try:
@@ -336,7 +336,7 @@ async def get_session_status_endpoint(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/results/{session_id}")
+@router.get("/results/{session_id}")
 def get_results(session_id: str, user_id: str = Depends(get_current_user)):
     """Get completed analysis results"""
     try:
@@ -395,7 +395,7 @@ def get_results(session_id: str, user_id: str = Depends(get_current_user)):
         logger.error(f"Error fetching results: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/api/analysis/citations/{session_id}")
+@router.get("/analysis/citations/{session_id}")
 def get_citation_analytics(session_id: str, user_id: str = Depends(get_current_user)):
     """Get detailed citation analytics for a session"""
     try:
@@ -407,7 +407,7 @@ def get_citation_analytics(session_id: str, user_id: str = Depends(get_current_u
         logger.error(f"Error getting citation analytics: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/api/analysis/citations/brand/{brand_name}")
+@router.get("/analysis/citations/brand/{brand_name}")
 def get_brand_citation_analytics(brand_name: str, user_id: str = Depends(get_current_user)):
     """Get aggregated citation analytics for all sessions of a brand"""
     try:
@@ -424,7 +424,7 @@ def get_brand_citation_analytics(brand_name: str, user_id: str = Depends(get_cur
         logger.error(f"Error getting brand citation analytics: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/api/results/")
+@router.get("/results/")
 def list_sessions(user_id: str = Depends(get_current_user)):
     """List user's sessions"""
     try:
@@ -439,7 +439,7 @@ def list_sessions(user_id: str = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/analysis/generate-custom-cohort-prompts/{session_id}")
+@router.post("/analysis/generate-custom-cohort-prompts/{session_id}")
 async def generate_custom_cohort_prompts(
     session_id: str,
     request: dict
@@ -533,7 +533,7 @@ async def generate_custom_cohort_prompts(
         logger.error(f"Error generating custom cohort prompts: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     
-@router.post("/api/analysis/execute-selected-prompts/{session_id}")
+@router.post("/analysis/execute-selected-prompts/{session_id}")
 async def execute_selected_prompts(
     session_id: str,
     background_tasks: BackgroundTasks,
@@ -710,7 +710,7 @@ async def execute_selected_prompts(
         logger.error(f"Error executing selected prompts: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
         
-@router.post("/api/analysis/validate-selection/{session_id}")
+@router.post("/analysis/validate-selection/{session_id}")
 async def validate_selection(session_id: str, request: dict):
     """
     Validate user's cohort and prompt selection before execution.
@@ -780,7 +780,7 @@ async def validate_selection(session_id: str, request: dict):
         logger.error(f"Error validating selection: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
     
-@router.get("/api/analysis/cohorts/{session_id}")
+@router.get("/analysis/cohorts/{session_id}")
 def get_analysis_cohorts(session_id: str, user_id: str = Depends(get_current_user)):
     """
     Get cohorts and prompts for prompt selection UI
@@ -1256,7 +1256,7 @@ def update_progress(session_id: str, progress: int, step: str):
     logger.info(f"[{session_id}] {progress}% - {step}")
 from services.database_manager import get_brand_visibility_history
 
-@router.get("/api/brand-history/{brand_name}")
+@router.get("/brand-history/{brand_name}")
 async def get_brand_history(brand_name: str, user_id: str = Depends(get_current_user)):
     """
     Get brand visibility history across all analysis dates (scoped to current user)
@@ -1278,7 +1278,7 @@ async def get_brand_history(brand_name: str, user_id: str = Depends(get_current_
         logger.error(f"Error fetching brand history: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
     
-@router.get("/api/brands")
+@router.get("/brands")
 def get_all_brands(user_id: str = Depends(get_current_user)):
     """Get all unique brands for dropdown selector"""
     try:
@@ -1288,7 +1288,7 @@ def get_all_brands(user_id: str = Depends(get_current_user)):
         logger.error(f"Error fetching brands: {str(e)}")
         return {"brands": [], "error": str(e)}
     
-@router.get("/api/recent-analyses-by-brand/{brand_name}")
+@router.get("/recent-analyses-by-brand/{brand_name}")
 def get_recent_analyses_by_brand(brand_name: str, user_id: str = Depends(get_current_user), limit: int = 20):
     """Get recent analyses for a specific brand"""
     try:
@@ -1297,7 +1297,7 @@ def get_recent_analyses_by_brand(brand_name: str, user_id: str = Depends(get_cur
     except Exception as e:
         logger.error(f"Error fetching analyses for brand {brand_name}: {str(e)}")
         return {"sessions": [], "error": str(e)}
-@router.get("/api/visibility-history/brand-product/{brand_name}/{product_name}")
+@router.get("/visibility-history/brand-product/{brand_name}/{product_name}")
 def get_brand_product_history(brand_name: str, product_name: str, user_id: str = Depends(get_current_user)):
     """Get visibility history for brand + product combination (scoped to current user)"""
     try:
@@ -1317,7 +1317,7 @@ def get_llm_names_from_session(session_id: str) -> List[str]:
         logger.error(f"Error getting LLM names: {str(e)}")
         return []
     
-@router.post("/api/reanalyze-with-same-prompts/{session_id}")
+@router.post("/reanalyze-with-same-prompts/{session_id}")
 async def reanalyze_with_same_prompts(
     session_id: str,
     background_tasks: BackgroundTasks,
@@ -1560,7 +1560,7 @@ async def run_analysis_with_saved_prompts(
         # ✅ FIX: Update DB
         update_session_status(session_id, status="error", error=str(e))
         
-@router.get("/api/same-prompts-history/{session_id}")
+@router.get("/same-prompts-history/{session_id}")
 def get_same_prompts_history(session_id: str, user_id: str = Depends(get_current_user)):
     """Get visibility history for when same prompts are analyzed again"""
     try:
@@ -1604,7 +1604,7 @@ def get_same_prompts_history(session_id: str, user_id: str = Depends(get_current
         logger.error(f"Error fetching same prompts history: {str(e)}", exc_info=True)
         return {"history": [], "error": str(e)}
 
-@router.post("/api/analysis/{session_id}/update-competitors")
+@router.post("/analysis/{session_id}/update-competitors")
 async def update_competitors_and_recalculate(
     session_id: str,
     request: CompetitorUpdateRequest,

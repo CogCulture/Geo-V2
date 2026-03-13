@@ -10,7 +10,7 @@ from services.tracking import send_signal
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/llms-txt", tags=["LLMs Txt"])
+router = APIRouter(prefix="/llms-txt", tags=["LLMs Txt"])
 
 class LlmsTxtRequest(BaseModel):
     url: str

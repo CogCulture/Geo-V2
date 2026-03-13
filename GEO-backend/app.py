@@ -101,7 +101,7 @@ app.include_router(analysis_router)
 app.include_router(llms_txt_router)
 
 # ============= ROOT ENDPOINTS =============
-@app.get("/api/health")
+@app.get("/health")
 def health_check():
     """Check if API is running"""
     return {

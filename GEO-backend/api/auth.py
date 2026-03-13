@@ -19,7 +19,7 @@ from services.database_manager import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["Auth"])
+router = APIRouter(tags=["Auth"])
 
 # JWT Configuration
 JWT_SECRET = os.environ.get("JWT_SECRET", "your-secret-key-change-in-production")

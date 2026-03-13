@@ -22,7 +22,7 @@ from api.config import PLAN_LIMITS
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/projects", tags=["Projects"])
+router = APIRouter(prefix="/projects", tags=["Projects"])
 
 class ProjectCreateRequest(BaseModel):
     name: str
