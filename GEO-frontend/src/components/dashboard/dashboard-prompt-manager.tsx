@@ -88,8 +88,8 @@ export function DashboardPromptManager({
       setLoadingCohorts(true);
       try {
         const token = localStorage.getItem("token");
-        const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-        const response = await fetch(`${API_BASE_URL}/api/analysis/cohorts/${sessionId}`, {
+        const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+        const response = await fetch(`${API_BASE_URL}/analysis/cohorts/${sessionId}`, {
           headers: { "Authorization": `Bearer ${token}` }
         });
 

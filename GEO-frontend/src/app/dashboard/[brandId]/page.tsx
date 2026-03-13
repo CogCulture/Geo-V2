@@ -10,7 +10,7 @@ import { Users } from "lucide-react";
 import type { AnalysisResults as AnalysisResultsType } from "@shared/schema";
 import { useAuth } from "@/contexts/AuthContext";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 export default function BrandDashboard() {
     const params = useParams();
@@ -40,7 +40,7 @@ export default function BrandDashboard() {
                 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                 if (uuidRegex.test(resolvedBrandName)) {
                     // It's a project ID, resolve it to a brand name first
-                    const projectRes = await fetch(`${API_BASE_URL}/api/projects/${resolvedBrandName}`, {
+                    const projectRes = await fetch(`${API_BASE_URL}/projects/${resolvedBrandName}`, {
                         headers: { "Authorization": `Bearer ${token}` }
                     });
                     if (projectRes.ok) {
@@ -51,7 +51,7 @@ export default function BrandDashboard() {
                 }
 
                 // 1. Get recent analyses to find the latest for this brand
-                const response = await fetch(`${API_BASE_URL}/api/recent-analyses`, {
+                const response = await fetch(`${API_BASE_URL}/recent-analyses`, {
                     headers: { "Authorization": `Bearer ${token}` }
                 });
                 if (!response.ok) throw new Error("Failed to fetch sessions");
@@ -65,7 +65,7 @@ export default function BrandDashboard() {
                 if (latestSession) {
                     setSessionId(latestSession.session_id);
                     // 2. Load results for this session
-                    const resultsRes = await fetch(`${API_BASE_URL}/api/results/${latestSession.session_id}`, {
+                    const resultsRes = await fetch(`${API_BASE_URL}/results/${latestSession.session_id}`, {
                         headers: { "Authorization": `Bearer ${token}` }
                     });
                     if (!resultsRes.ok) throw new Error("Failed to load results");
@@ -110,7 +110,7 @@ export default function BrandDashboard() {
         setIsReanalyzing(true);
         try {
             const token = localStorage.getItem("token");
-            const response = await fetch(`${API_BASE_URL}/api/analysis/fork-session?parent_session_id=${sessionId}`, {
+            const response = await fetch(`${API_BASE_URL}/analysis/fork-session?parent_session_id=${sessionId}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

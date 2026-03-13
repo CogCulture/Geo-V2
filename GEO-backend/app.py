@@ -67,10 +67,17 @@ app = FastAPI(
 )
 
 # ============= CORS MIDDLEWARE =============
-origins = [ # Your current frontend URL
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+
+# Support multiple origins via comma-separated ALLOWED_ORIGINS env var
+extra_origins = os.environ.get("ALLOWED_ORIGINS", "")
+extra_origins_list = [o.strip() for o in extra_origins.split(",") if o.strip()]
+
+origins = list(set([
     "http://localhost:3000",
-    os.environ.get("FRONTEND_URL", "http://localhost:3000")
-]
+    FRONTEND_URL,
+    *extra_origins_list
+]))
 
 app.add_middleware(
     CORSMiddleware,

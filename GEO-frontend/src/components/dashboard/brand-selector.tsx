@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Search, ChevronDown } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 interface BrandSelectorProps {
   onBrandSelect: (brand: string) => void;
@@ -24,7 +24,7 @@ export function BrandSelector({ onBrandSelect, selectedBrand }: BrandSelectorPro
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
       }
-      const response = await fetch(`${API_BASE_URL}/api/brands`, { headers, credentials: "include" });
+      const response = await fetch(`${API_BASE_URL}/brands`, { headers, credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch brands");
       return response.json();
     },

@@ -84,7 +84,7 @@ export function AnalysisForm({ onAnalysisStart }: AnalysisFormProps) {
       let projectId = null;
       try {
         const token = localStorage.getItem("token");
-        const projectResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/projects`, {
+        const projectResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api"}/api/projects`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
           body: JSON.stringify({

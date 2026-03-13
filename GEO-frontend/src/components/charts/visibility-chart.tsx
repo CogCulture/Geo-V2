@@ -25,7 +25,7 @@ interface VisibilityChartProps {
   chartId?: string; // NEW: Allow custom ID for PDF capture
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 export function VisibilityChart({
   brandName,
@@ -50,7 +50,7 @@ export function VisibilityChart({
 
         const token = localStorage.getItem("token");
         const response = await fetch(
-          `${API_BASE_URL}/api/brand-history/${encodeURIComponent(displayBrandName)}`,
+          `${API_BASE_URL}/brand-history/${encodeURIComponent(displayBrandName)}`,
           {
             headers: {
               "Authorization": `Bearer ${token}`

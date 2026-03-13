@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 interface PageAnalyzed {
     url: string;
@@ -91,7 +91,7 @@ export function LlmsTxtGenerator() {
 
         try {
             const token = localStorage.getItem("token");
-            const res = await fetch(`${API_BASE_URL}/api/llms-txt/generate`, {
+            const res = await fetch(`${API_BASE_URL}/llms-txt/generate`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -112,7 +112,7 @@ export function LlmsTxtGenerator() {
             pollingRef.current = setInterval(async () => {
                 try {
                     const statusRes = await fetch(
-                        `${API_BASE_URL}/api/llms-txt/status/${taskId}`,
+                        `${API_BASE_URL}/llms-txt/status/${taskId}`,
                         { headers: { Authorization: `Bearer ${token}` } }
                     );
 

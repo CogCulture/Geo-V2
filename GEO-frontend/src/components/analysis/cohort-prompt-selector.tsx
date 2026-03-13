@@ -12,7 +12,7 @@ import { AVAILABLE_LLMS } from "@shared/schema";
 
 import { useAuth } from "@/contexts/AuthContext";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 const FRONTEND_PROMPT_LIMITS: Record<string, { max_prompts_per_project: number }> = {
   "free": { max_prompts_per_project: 2 },
@@ -87,7 +87,7 @@ export function CohortPromptSelector({
         headers["Authorization"] = `Bearer ${token}`;
       }
       console.log("📤 Request headers:", headers);
-      const response = await fetch(`${API_BASE_URL}/api/analysis/cohorts/${sessionId}`, {
+      const response = await fetch(`${API_BASE_URL}/analysis/cohorts/${sessionId}`, {
         headers,
         credentials: "include"
       });
@@ -176,7 +176,7 @@ export function CohortPromptSelector({
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
       }
-      const response = await fetch(`${API_BASE_URL}/api/analysis/generate-custom-cohort-prompts/${sessionId}`, {
+      const response = await fetch(`${API_BASE_URL}/analysis/generate-custom-cohort-prompts/${sessionId}`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -209,7 +209,7 @@ export function CohortPromptSelector({
         selected_llms: selectedLLMs
       };
 
-      const response = await fetch(`${API_BASE_URL}/api/analysis/execute-selected-prompts/${sessionId}`, {
+      const response = await fetch(`${API_BASE_URL}/analysis/execute-selected-prompts/${sessionId}`, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),

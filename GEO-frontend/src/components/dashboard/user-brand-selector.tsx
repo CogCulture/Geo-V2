@@ -10,7 +10,7 @@ import {
 import { Loader2, LayoutGrid } from "lucide-react";
 import type { AnalysisSession } from "@shared/schema";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 interface UserBrandSelectorProps {
   currentBrand: string | null;
@@ -23,7 +23,7 @@ export function UserBrandSelector({ currentBrand, onBrandChange }: UserBrandSele
     queryKey: ["/api/recent-analyses"],
     queryFn: async () => {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${API_BASE_URL}/api/recent-analyses`, {
+      const response = await fetch(`${API_BASE_URL}/recent-analyses`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       if (!response.ok) throw new Error("Failed to fetch recent analyses");
@@ -35,7 +35,7 @@ export function UserBrandSelector({ currentBrand, onBrandChange }: UserBrandSele
     queryKey: ["/api/projects"],
     queryFn: async () => {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${API_BASE_URL}/api/projects`, {
+      const response = await fetch(`${API_BASE_URL}/projects`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       if (!response.ok) throw new Error("Failed to fetch projects");

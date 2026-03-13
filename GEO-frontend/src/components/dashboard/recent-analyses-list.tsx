@@ -17,14 +17,14 @@ interface AnalysisSession {
   website_url?: string;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"; // ✅ FIX
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api"; // ✅ FIX
 
 export function RecentAnalysesList({ onAnalysisSelect }: RecentAnalysesListProps) {
   const { data, isLoading, error } = useQuery<{ total: number; analyses: AnalysisSession[] }>({
     queryKey: ["/api/recent-analyses"],
     queryFn: async () => {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${API_BASE_URL}/api/recent-analyses`, {
+      const response = await fetch(`${API_BASE_URL}/recent-analyses`, {
         headers: {
           "Authorization": `Bearer ${token}`
         }

@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -55,8 +55,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const headers = { Authorization: `Bearer ${storedToken}` };
       const [meRes, subRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/auth/me`, { headers }),
-        fetch(`${API_BASE_URL}/api/payments/subscription-status`, { headers }),
+        fetch(`${API_BASE_URL}/auth/me`, { headers }),
+        fetch(`${API_BASE_URL}/payments/subscription-status`, { headers }),
       ]);
 
       if (!meRes.ok) throw new Error("Token invalid or expired");

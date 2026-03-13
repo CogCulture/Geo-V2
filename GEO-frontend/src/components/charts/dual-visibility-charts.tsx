@@ -10,7 +10,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { TrendingUp } from "lucide-react";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 interface DualVisibilityChartsProps {
   brandName: string;
@@ -33,8 +33,8 @@ export function DualVisibilityCharts({ brandName, productName, sessionId }: Dual
     queryFn: async () => {
       const token = localStorage.getItem("token");
       const endpoint = isProductSpecific
-        ? `${API_BASE_URL}/api/visibility-history/brand-product/${encodeURIComponent(brandName)}/${encodeURIComponent(productName)}`
-        : `${API_BASE_URL}/api/brand-history/${encodeURIComponent(brandName)}`;
+        ? `${API_BASE_URL}/visibility-history/brand-product/${encodeURIComponent(brandName)}/${encodeURIComponent(productName)}`
+        : `${API_BASE_URL}/brand-history/${encodeURIComponent(brandName)}`;
 
       const response = await fetch(endpoint, {
         headers: { "Authorization": `Bearer ${token}` }

@@ -18,7 +18,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 interface Project {
     id: string;
@@ -64,7 +64,7 @@ export function ProjectsWindow({ onSelectProject, onCreateProject }: ProjectsWin
         setIsLoading(true);
         try {
             const token = localStorage.getItem("token");
-            const response = await fetch(`${API_BASE_URL}/api/projects`, {
+            const response = await fetch(`${API_BASE_URL}/projects`, {
                 headers: { "Authorization": `Bearer ${token}` }
             });
             if (response.ok) {
@@ -88,7 +88,7 @@ export function ProjectsWindow({ onSelectProject, onCreateProject }: ProjectsWin
 
         try {
             const token = localStorage.getItem("token");
-            const response = await fetch(`${API_BASE_URL}/api/projects/${projectToDelete}`, {
+            const response = await fetch(`${API_BASE_URL}/projects/${projectToDelete}`, {
                 method: "DELETE",
                 headers: { "Authorization": `Bearer ${token}` }
             });

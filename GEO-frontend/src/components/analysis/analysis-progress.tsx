@@ -3,7 +3,7 @@ import { Progress } from "@/components/ui/progress";
 import { Card } from "@/components/ui/card";
 import { Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 interface AnalysisProgressProps {
   sessionId: string;
@@ -25,7 +25,7 @@ export function AnalysisProgress({ sessionId, onComplete, onPromptSelectionReady
         const headers: Record<string, string> = {};
         if (token) headers["Authorization"] = `Bearer ${token}`;
 
-        const response = await fetch(`${API_BASE_URL}/api/analysis/status/${sessionId}`, { headers });
+        const response = await fetch(`${API_BASE_URL}/analysis/status/${sessionId}`, { headers });
         
         // ✅ FIXED: Graceful error handling instead of throw
         if (!response.ok) {

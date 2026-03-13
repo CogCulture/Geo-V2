@@ -3,7 +3,7 @@ uvicorn[standard]
 python-dotenv
 anthropic
 tavily-python
-mistralai
+mistralai==1.0.1
 plotly
 pandas
 requests

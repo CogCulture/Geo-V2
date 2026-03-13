@@ -5,6 +5,7 @@ from tavily import TavilyClient
 from anthropic import Anthropic
 from mistralai import Mistral
 
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -14,7 +15,8 @@ MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY")
 
 tavily_client = TavilyClient(api_key=TAVILY_API_KEY)
 anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
-mistral_client = Mistral(api_key=MISTRAL_API_KEY) if MISTRAL_API_KEY else None
+mistralclient = Mistral(api_key=MISTRAL_API_KEY) if MISTRAL_API_KEY else None
+
 
 def conduct_deep_research(brand_name: str, product_name: Optional[str] = None, 
                          website_url: Optional[str] = None, 

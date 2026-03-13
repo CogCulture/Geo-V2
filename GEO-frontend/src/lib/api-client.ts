@@ -24,12 +24,18 @@ export async function apiRequest(
     // Prepend API URL if it's a relative path starting with /api to avoid 404s
     let fullUrl = url;
     if (url.startsWith("/api") || url.startsWith("/")) {
-        // Use env var or default to localhost:8000
-        const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-        // Remove double slashes if any (though nice to have, simple concatenation is usually fine if mindful)
-        // If apiBase ends with / and url starts with /, remove one.
+        // Standardise to include /api in the base default
+        const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
         const base = apiBase.endsWith("/") ? apiBase.slice(0, -1) : apiBase;
-        const path = url.startsWith("/") ? url : `/${url}`;
+        
+        // If url starts with /api, we strip it because it's already in the base
+        let path = url;
+        if (url.startsWith("/api")) {
+            path = url.substring(4); // Remove "/api"
+        }
+        if (!path.startsWith("/")) {
+            path = "/" + path;
+        }
         fullUrl = `${base}${path}`;
     }
 

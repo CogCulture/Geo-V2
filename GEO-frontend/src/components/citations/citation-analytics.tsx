@@ -44,7 +44,7 @@ interface CitationAnalyticsProps {
     brandName?: string;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 export function CitationAnalytics({ sessionId, brandName }: CitationAnalyticsProps) {
     const [data, setData] = useState<DomainCitation[]>([]);
@@ -64,9 +64,9 @@ export function CitationAnalytics({ sessionId, brandName }: CitationAnalyticsPro
 
                 let url = "";
                 if (brandName) {
-                    url = `${API_BASE_URL}/api/analysis/citations/brand/${encodeURIComponent(brandName)}`;
+                    url = `${API_BASE_URL}/analysis/citations/brand/${encodeURIComponent(brandName)}`;
                 } else if (sessionId) {
-                    url = `${API_BASE_URL}/api/analysis/citations/${sessionId}`;
+                    url = `${API_BASE_URL}/analysis/citations/${sessionId}`;
                 } else {
                     return;
                 }

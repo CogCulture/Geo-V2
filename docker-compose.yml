@@ -2,12 +2,13 @@ services:
   backend:
     build: ./GEO-backend
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"    # ← Only accessible locally, not public internet
     env_file:
       - ./GEO-backend/.env
     environment:
       - SELENIUM_URL=http://selenium-chrome:4444/wd/hub
-      - FRONTEND_URL=http://34.56.255.33:3000
+      - FRONTEND_URL=https://${VM_IP}
+      - ALLOWED_ORIGINS=https://${VM_IP},http://${VM_IP},https://optimiseurbrand.tech,https://geo.optimiseurbrand.tech
     volumes:
       - ./GEO-backend/analysis_database.db:/app/analysis_database.db
       - ./GEO-backend/brand_visibility.db:/app/brand_visibility.db
@@ -16,13 +17,17 @@ services:
     restart: unless-stopped
 
   frontend:
-    build: ./GEO-frontend
+    build:
+      context: ./GEO-frontend
+      args:
+        - NEXT_PUBLIC_API_URL=/api    # ← Use relative path to avoid Mixed Content errors on HTTPS
+        - NEXT_PUBLIC_GOOGLE_CLIENT_ID=${NEXT_PUBLIC_GOOGLE_CLIENT_ID}
+        - NEXT_PUBLIC_RAZORPAY_KEY_ID=${NEXT_PUBLIC_RAZORPAY_KEY_ID}
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"    # ← Only accessible locally, not public internet
     env_file:
       - ./GEO-frontend/.env.local
     environment:
-      - NEXT_PUBLIC_API_URL=http://34.56.255.33:8000
       - FASTAPI_BASE_URL=http://backend:8000
     depends_on:
       - backend
@@ -32,5 +37,5 @@ services:
     image: selenium/standalone-chrome:latest
     shm_size: 2gb
     ports:
-      - "4444:4444"
+      - "127.0.0.1:4444:4444"    # ← Lock this down too
     restart: unless-stopped
